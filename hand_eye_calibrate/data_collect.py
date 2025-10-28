@@ -13,6 +13,7 @@ import numpy as np
 import pyrealsense2 as rs
 import os
 import sys
+import threading
 
 count = 0
 
@@ -26,30 +27,27 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 image_save_path = os.path.join(_THIS_DIR, "collect_data")
 os.makedirs(image_save_path, exist_ok=True)
 
-# 将内部包路径加入 sys.path，便于导入 bimanual.SingleArm
+# 将内部包路径加入 sys.path，便于导入内部模块
 _PKG_DIR = os.path.abspath(os.path.join(_THIS_DIR, "..", "arx_x5_python"))
 if _PKG_DIR not in sys.path:
     sys.path.insert(0, _PKG_DIR)
 
 try:
-    from bimanual import SingleArm  # arx_x5_python/arx_x5_python/bimanual/__init__.py
+    import keyboard_control as kc  # arx_x5_python/arx_x5_python/keyboard_control.py
 except Exception as e:
     raise ImportError(
-        f"无法导入 SingleArm，请确认已构建 API 并存在 .so：{e}"
+        f"无法导入 keyboard_control，请确认已构建 API 并存在 .so：{e}"
     )
-
-# 初始化单臂对象（如需修改端口或机型类型，可改此处配置）
-arm_config = {
-    "can_port": os.environ.get("ARX_CAN_PORT", "can0"),
-    # type: 0-标准X5，1-主臂，2-2025版，如与设备不符可按需调整
-    "type": int(os.environ.get("ARX_ARM_TYPE", "0")),
-}
-single_arm = SingleArm(arm_config)
 
 
 def data_collect():
     global count
     try:
+        # 启动键盘控制（curses）线程，终端里控制机械臂姿态
+        ctrl_thread = threading.Thread(target=lambda: kc.curses.wrapper(kc.keyboard_control), daemon=True)
+        ctrl_thread.start()
+        print("已启动键盘控制（终端里操作），在图像窗口按 h 采集，按 q 退出采集")
+
         while True:
             frames = pipeline.wait_for_frames()
             color_frame = frames.get_color_frame()
@@ -66,12 +64,12 @@ def data_collect():
             if k == ord('q'):
                 print("收到退出指令，结束采集...")
                 break
-            if k == ord('h'):  # 键盘按一下h, 保存当前照片和机械臂位姿
+            if k == ord('h'):  # 键盘按一下h, 保存当前照片和机械臂位姿（在图像窗口内按键）
                 print(f"采集第{count}组数据...")
 
                 # 从 ARX5 获取当前末端位姿 [x,y,z,roll,pitch,yaw]，弧度
                 try:
-                    xyzrpy = single_arm.get_ee_pose_xyzrpy()
+                    xyzrpy = kc.single_arm.get_ee_pose_xyzrpy()
                     pose = xyzrpy.tolist()
                 except Exception as e:
                     print(f"获取机械臂位姿失败：{e}")
